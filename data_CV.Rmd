@@ -1,0 +1,425 @@
+---
+title: "Untitled"
+output: html_document
+date: '2022-03-20'
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(rjson)
+library(jsonlite)
+library(sf)
+library(rgdal)
+library(purrr)
+library(writexl)
+library(readr)
+library(lubridate)
+library(readxl)
+library(reshape2) 
+library(Hmisc)
+library(mice)
+library(lattice)
+library(VIM)
+library(psych)
+library(ggcorrplot)
+library(vtable)
+library(corrr)
+library(wooldridge)
+library(socviz)
+library(modelr)
+library(broom)
+library(ggiraphExtra)
+library(GGally)
+library(tidyr)
+library(gridExtra)
+library(sjPlot)
+library(stargazer)
+library(ggcorrplot)
+library(corrplot)
+
+
+setwd("E:/Capstone-new/Solar data set/air condition from 1995-2019 in all state/Merging")
+
+data <- read_xlsx("finaldata-for submission.xlsx")
+imputed_data <- read_xlsx("imputed_data.xlsx")
+
+#' correlation_matrix
+#' Creates a publication-ready / formatted correlation matrix, using `Hmisc::rcorr` in the backend.
+#'
+#' @param df dataframe; containing numeric and/or logical columns to calculate correlations for
+#' @param type character; specifies the type of correlations to compute; gets passed to `Hmisc::rcorr`; options are `"pearson"` or `"spearman"`; defaults to `"pearson"`
+#' @param digits integer/double; number of decimals to show in the correlation matrix; gets passed to `formatC`; defaults to `3`
+#' @param decimal.mark character; which decimal.mark to use; gets passed to `formatC`; defaults to `.`
+#' @param use character; which part of the correlation matrix to display; options are `"all"`, `"upper"`, `"lower"`; defaults to `"all"`
+#' @param show_significance boolean; whether to add `*` to represent the significance levels for the correlations; defaults to `TRUE`
+#' @param replace_diagonal boolean; whether to replace the correlations on the diagonal; defaults to `FALSE`
+#' @param replacement character; what to replace the diagonal and/or upper/lower triangles with; defaults to `""` (empty string)
+#'
+#' @return a correlation matrix
+#' @export
+#'
+#' @examples
+#' `correlation_matrix(iris)`
+#' `correlation_matrix(mtcars)`
+correlation_matrix <- function(df, 
+                               type = "pearson",
+                               digits = 3, 
+                               decimal.mark = ".",
+                               use = "all", 
+                               show_significance = TRUE, 
+                               replace_diagonal = FALSE, 
+                               replacement = ""){
+  
+  # check arguments
+  stopifnot({
+    is.numeric(digits)
+    digits >= 0
+    use %in% c("all", "upper", "lower")
+    is.logical(replace_diagonal)
+    is.logical(show_significance)
+    is.character(replacement)
+  })
+  # we need the Hmisc package for this
+  require(Hmisc)
+  
+  # retain only numeric and boolean columns
+  isNumericOrBoolean = vapply(df, function(x) is.numeric(x) | is.logical(x), logical(1))
+  if (sum(!isNumericOrBoolean) > 0) {
+    cat('Dropping non-numeric/-boolean column(s):', paste(names(isNumericOrBoolean)[!isNumericOrBoolean], collapse = ', '), '\n\n')
+  }
+  df = df[isNumericOrBoolean]
+  
+  # transform input data frame to matrix
+  x <- as.matrix(df)
+  
+  # run correlation analysis using Hmisc package
+  correlation_matrix <- Hmisc::rcorr(x, type = type)
+  R <- correlation_matrix$r # Matrix of correlation coeficients
+  p <- correlation_matrix$P # Matrix of p-value 
+  
+  # transform correlations to specific character format
+  Rformatted = formatC(R, format = 'f', digits = digits, decimal.mark = decimal.mark)
+  
+  # if there are any negative numbers, we want to put a space before the positives to align all
+  if (sum(!is.na(R) & R < 0) > 0) {
+    Rformatted = ifelse(!is.na(R) & R > 0, paste0(" ", Rformatted), Rformatted)
+  }
+
+  # add significance levels if desired
+  if (show_significance) {
+    # define notions for significance levels; spacing is important.
+    stars <- ifelse(is.na(p), "", ifelse(p < .001, "***", ifelse(p < .01, "**", ifelse(p < .05, "*", ""))))
+    Rformatted = paste0(Rformatted, stars)
+  }
+  
+  # make all character strings equally long
+  max_length = max(nchar(Rformatted))
+  Rformatted = vapply(Rformatted, function(x) {
+    current_length = nchar(x)
+    difference = max_length - current_length
+    return(paste0(x, paste(rep(" ", difference), collapse = ''), sep = ''))
+  }, FUN.VALUE = character(1))
+  
+  # build a new matrix that includes the formatted correlations and their significance stars
+  Rnew <- matrix(Rformatted, ncol = ncol(x))
+  rownames(Rnew) <- colnames(Rnew) <- colnames(x)
+  
+  # replace undesired values
+  if (use == 'upper') {
+    Rnew[lower.tri(Rnew, diag = replace_diagonal)] <- replacement
+  } else if (use == 'lower') {
+    Rnew[upper.tri(Rnew, diag = replace_diagonal)] <- replacement
+  } else if (replace_diagonal) {
+    diag(Rnew) <- replacement
+  }
+  
+  return(Rnew)
+}
+
+
+
+corr_simple <- function(data=df,sig=0.5){
+  #convert data to numeric in order to run correlations
+  #convert to factor first to keep the integrity of the data - each value will become a number rather than turn into NA
+  df_cor <- data %>% mutate_if(is.character, as.factor)
+  df_cor <- df_cor %>% mutate_if(is.factor, as.numeric)
+  #run a correlation and drop the insignificant ones
+  corr <- cor(df_cor)
+  #prepare to drop duplicates and correlations of 1     
+  corr[lower.tri(corr,diag=TRUE)] <- NA 
+  #drop perfect correlations
+  corr[corr == 1] <- NA 
+  #turn into a 3-column table
+  corr <- as.data.frame(as.table(corr))
+  #remove the NA values from above 
+  corr <- na.omit(corr) 
+  #select significant values  
+  corr <- subset(corr, abs(Freq) > sig) 
+  #sort by highest correlation
+  corr <- corr[order(-abs(corr$Freq)),] 
+  #print table
+  print(corr)
+  #turn corr back into matrix in order to plot with corrplot
+  mtx_corr <- reshape2::acast(corr, Var1~Var2, value.var="Freq")
+  
+  #plot correlations visually
+  corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ")
+}
+
+```
+
+## Descriptive statitics
+```{r}
+ds <- imputed_data_merge %>%
+  mutate(year = as.character(year),
+         State.Name = as.character(State.Name),
+         State.Code = as.character(State.Code))
+
+stargazer(as.data.frame(ds),
+          type = "html",
+          out = "summarystat.doc",
+          model.names = T,
+          digits = 4,
+          font.size = "tiny",
+          column.sep.width = "1pt",
+          header = FALSE,
+          no.space = TRUE,
+          summary.stat = c("n",
+                           "max",
+                           "min",
+                           "mean",
+                           "median",
+                           "p25",
+                           "p75",
+                           "sd"
+                           ))
+```
+
+
+## Outlier
+```{r}
+
+data_long <- ds %>%
+  select(State.Name,
+         mean_so2,
+         mean_CO,
+         FUEL_COMB_all_SO2,
+         FUEL_COMB_all_CO,
+         CHEMICAL_ALLIED_PRODUCT_SO2,
+         CHEMICAL_ALLIED_PRODUCT_CO,
+         METALS_PROCESSING_SO2,
+         METALS_PROCESSING_CO,
+         PETROLEUM_RELATED_SO2,
+         PETROLEUM_RELATED_CO,
+         OTHER_INDUSTRIAL_SO2,
+         OTHER_INDUSTRIAL_CO,
+         SOLVENT_UTILIZATION_SO2,
+         SOLVENT_UTILIZATION_CO,
+         STORAGE_TRANSPORT_SO2,
+         STORAGE_TRANSPORT_CO,
+         DISPOSAL_RECYCLING_SO2,
+         DISPOSAL_RECYCLING_CO,
+         VEHICLES_so2,
+         VEHICLES_CO,
+         MISCELLANEOUS_SO2,
+         MISCELLANEOUS_CO,
+         FIRES_SO2,
+         FIRES_CO,
+         sum_house_building,
+         mean_UV_Index_Issued
+         ) %>%
+  melt(id = "State.Name")
+
+ggplot(data_long, aes(x = variable, y = value)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title="Boxplot of all Variable Spacing Between each 10 years gaps",
+       y = "Variable Index Range",
+       subtitle = "By Stefan F. and Lei. W"
+       )
+
+```
+
+
+##data correlations
+
+```{r}
+
+imputed_data_merge <- imputed_data %>%
+  mutate(FUEL_COMB_all_SO2 = (FUEL_COMB_ELEC_UTIL_SO2 + FUEL_COMB_INDUSTRIAL_SO2 + FUEL_COMB_OTHER_SO2)/3,
+         VEHICLES_so2 = (HIGHWAY_VEHICLES_SO2 + OFF_HIGHWAY_SO2)/2,
+         FUEL_COMB_all_CO = (FUEL_COMB_ELEC_UTIL_CO + FUEL_COMB_INDUSTRIAL_CO + FUEL_COMB_OTHER_CO)/3,
+         VEHICLES_CO = (HIGHWAY_VEHICLES_CO + OFF_HIGHWAY_CO)/2,
+         PETROLEUM_RELATED_SO2 = PETROLEUM_RELATED_INDUSTRIES_SO2,
+         OTHER_INDUSTRIAL_SO2 = OTHER_INDUSTRIAL_PROCESSES_SO2,
+         DISPOSAL_RECYCLING_SO2 = WASTE_DISPOSAL_RECYCLING_SO2,
+         PETROLEUM_RELATED_CO = PETROLEUM_RELATED_INDUSTRIES_CO,
+         OTHER_INDUSTRIAL_CO = OTHER_INDUSTRIAL_PROCESSES_CO,
+         DISPOSAL_RECYCLING_CO = WASTE_DISPOSAL_RECYCLING_CO,
+         FIRES_SO2 = (WILDFIRES_SO2 + PRESCRIBED_FIRES_SO2)/2,
+         FIRES_CO = (WILDFIRES_CO + PRESCRIBED_FIRES_CO) /2
+         )
+
+imputed_data_merge$FUEL_COMB_ELEC_UTIL_SO2 <- NULL
+imputed_data_merge$FUEL_COMB_INDUSTRIAL_SO2 <- NULL
+imputed_data_merge$FUEL_COMB_OTHER_SO2 <- NULL
+imputed_data_merge$HIGHWAY_VEHICLES_SO2 <- NULL
+imputed_data_merge$OFF_HIGHWAY_SO2 <- NULL
+imputed_data_merge$FUEL_COMB_ELEC_UTIL_CO <- NULL
+imputed_data_merge$FUEL_COMB_INDUSTRIAL_CO <- NULL
+imputed_data_merge$FUEL_COMB_OTHER_CO <- NULL
+imputed_data_merge$HIGHWAY_VEHICLES_CO <- NULL
+imputed_data_merge$OFF_HIGHWAY_CO <- NULL
+imputed_data_merge$PETROLEUM_RELATED_INDUSTRIES_SO2 <- NULL
+imputed_data_merge$OTHER_INDUSTRIAL_PROCESSES_SO2 <- NULL
+imputed_data_merge$WASTE_DISPOSAL_RECYCLING_SO2 <- NULL
+imputed_data_merge$PETROLEUM_RELATED_INDUSTRIES_CO <- NULL
+imputed_data_merge$OTHER_INDUSTRIAL_PROCESSES_CO <- NULL
+imputed_data_merge$WASTE_DISPOSAL_RECYCLING_CO <- NULL
+imputed_data_merge$WILDFIRES_CO <- NULL
+imputed_data_merge$PRESCRIBED_FIRES_CO <- NULL
+imputed_data_merge$WILDFIRES_SO2 <- NULL
+imputed_data_merge$PRESCRIBED_FIRES_SO2 <- NULL
+
+as.data.frame(imputed_data_merge)
+
+data_cor <- imputed_data_merge %>%
+  select(mean_so2,
+         FUEL_COMB_all_SO2,
+         VEHICLES_so2,
+         CHEMICAL_ALLIED_PRODUCT_SO2,
+         METALS_PROCESSING_SO2,
+         PETROLEUM_RELATED_SO2,
+         OTHER_INDUSTRIAL_SO2,
+         SOLVENT_UTILIZATION_SO2,
+         STORAGE_TRANSPORT_SO2,
+         DISPOSAL_RECYCLING_SO2,
+         MISCELLANEOUS_SO2,
+         FIRES_SO2,
+         sum_house_building,
+         mean_UV_Index_Issued,
+         year_dummy,
+         state_dummy,
+         Population
+         ) 
+correlation_m <- correlation_matrix(data_cor)
+stargazer(correlation_m,
+          type = "html",
+          out = "corre.doc",
+          model.names = T,
+          digits = 4,
+          font.size = "tiny",
+          column.sep.width = "1pt",
+          header = FALSE,
+          no.space = TRUE,
+          title = "The Correlation Matrix About SO2 related Variables"
+          )
+corr_simple(data_cor)
+data_cor1 <- imputed_data_merge %>%
+  select(mean_CO,
+         FUEL_COMB_all_CO,
+         VEHICLES_CO,
+         CHEMICAL_ALLIED_PRODUCT_CO,
+         METALS_PROCESSING_CO,
+         PETROLEUM_RELATED_CO,
+         OTHER_INDUSTRIAL_CO,
+         SOLVENT_UTILIZATION_CO,
+         STORAGE_TRANSPORT_CO,
+         DISPOSAL_RECYCLING_CO,
+         MISCELLANEOUS_CO,
+         FIRES_CO,
+         sum_house_building,
+         mean_UV_Index_Issued,
+         year_dummy,
+         state_dummy,
+         Population
+         ) 
+correlation_m1 <- correlation_matrix(data_cor1)
+stargazer(correlation_m1,
+          type = "html",
+          out = "corre1.doc",
+          model.names = T,
+          digits = 4,
+          font.size = "tiny",
+          column.sep.width = "1pt",
+          header = FALSE,
+          no.space = TRUE,
+          title = "The Correlation Matrix About CO related Variables"
+          )
+corr_simple(data_cor1)
+
+write_xlsx(imputed_data_merge, path = "E:/Capstone-new/Solar data set/air condition from 1995-2019 in all state/Merging\\imputed_data_merge.xlsx")
+
+
+```
+
+
+## Data Visulzation (1)
+```{r}
+
+## mean_so2 and mean_co graph year trend graph
+ggplot(imputed_data_merge,
+       aes(x = year,
+           y = mean_so2,
+           color = State.Name)) +
+  geom_jitter(alpha = 0.3) +
+  geom_smooth(color = "black", se = FALSE, method = "loess") +
+  geom_vline(xintercept = 2009, color = "blue", linetype = "dashed") +
+  geom_text(aes(2009, 0, label = 2009, vjust = 1), color = "black") +
+  labs(
+    title = "SO2 index acroos time/state",
+    x ="Time Period",
+    y = "SO2",
+    subtitle = "By Stefan F. adn Lei.W"
+       )
+
+
+ggplot(imputed_data_merge,
+       aes(x = year,
+           y = mean_CO,
+           color = State.Name)) +
+  geom_jitter(alpha = 0.3) +
+  geom_smooth(color = "Black", se = FALSE,method = "loess") +
+  geom_vline(xintercept = 2009, color = "blue", linetype = "dashed") +
+  geom_text(aes(2009, 0, label = 2009, vjust = 1), color = "black") +
+  labs(
+    title = "CO index acroos time/state",
+    x ="Time Period",
+    y = "CO",
+    subtitle = "By Stefan F. adn Lei.W"
+  )
+
+```
+
+## Data Visulzation (2)
+```{r}
+
+plotdata <- imputed_data_merge %>%
+  filter(State.Code == 6)
+
+ggplot(imputed_data_merge,
+       aes(x = mean_so2)) +
+  geom_density() +
+  facet_wrap(~state_dummy) +
+  labs(
+    title = "SO2 distribution of Non-California V.S California",
+    x ="SO2",
+    y = "Frequency",
+    subtitle = "By Stefan F. adn Lei.W"
+  )
+  
+ggplot(imputed_data_merge,
+       aes(x = mean_CO)) +
+  geom_density() +
+  facet_wrap(~state_dummy) +
+  labs(
+    title = "CO distribution of Non-California V.S California",
+    x ="CO",
+    y = "Frequency",
+    subtitle = "By Stefan F. adn Lei.W"
+  )
+```
