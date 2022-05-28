@@ -1,0 +1,652 @@
+---
+title: "Offical data analysis"
+author: "enxian Fu"
+date: "2/2/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(rjson)
+library(jsonlite)
+library(sf)
+library(rgdal)
+library(purrr)
+library(writexl)
+library(readr)
+library(lubridate)
+library(readxl)
+library(reshape2) 
+
+path1 = "C:/Users/34731/Desktop/Capstone/Solar data set/air condition from 1995-2019 in all state/daily data/CO"
+path2 = "C:/Users/34731/Desktop/Capstone/Solar data set/air condition from 1995-2019 in all state/daily data/SO2"
+path3 = "C:/Users/34731/Desktop/Capstone/Solar data set/air emiision data from 1996-2019"
+path4 = "C:/Users/34731/Desktop/Capstone/Solar data set/air condition from 1995-2019 in all state/Merging"
+
+#'x' is the column of a data.frame that holds 2 digit state codes
+stateFromLower <-function(x) {
+   #read 52 state codes into local variable [includes DC (Washington D.C. and PR (Puerto Rico)]
+  st.codes<-data.frame(
+                      state=as.factor(c("AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA",
+                                         "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME",
+                                         "MI", "MN", "MO", "MS",  "MT", "NC", "ND", "NE", "NH", "NJ", "NM",
+                                         "NV", "NY", "OH", "OK", "OR", "PA", "PR", "RI", "SC", "SD", "TN",
+                                         "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY")),
+                      full=as.factor(c("alaska","alabama","arkansas","arizona","california","colorado",
+                                       "connecticut","district of columbia","delaware","florida","georgia",
+                                       "hawaii","iowa","idaho","illinois","indiana","kansas","kentucky",
+                                       "louisiana","massachusetts","maryland","maine","michigan","minnesota",
+                                       "missouri","mississippi","montana","north carolina","north dakota",
+                                       "nebraska","new hampshire","new jersey","new mexico","nevada",
+                                       "new york","ohio","oklahoma","oregon","pennsylvania","puerto rico",
+                                       "rhode island","south carolina","south dakota","tennessee","texas",
+                                       "utah","virginia","vermont","washington","wisconsin",
+                                       "west virginia","wyoming"))
+                       )
+     #create an nx1 data.frame of state codes from source column
+  st.x<-data.frame(state=x)
+     #match source codes with codes from 'st.codes' local variable and use to return the full state name
+  refac.x<-st.codes$full[match(st.x$state,st.codes$state)]
+     #return the full state names in the same order in which they appeared in the original source
+  return(refac.x)
+ 
+}
+
+```
+
+
+## CO data
+```{r}
+setwd(path1)
+files <- list.files(pattern="*.csv")
+mainDF <- files %>% 
+  map_dfr(read.csv)
+
+airdata <- mainDF %>%
+  select(State.Name,
+         County.Name,
+         City.Name,
+         Date.Local,
+         Parameter.Name,
+         Arithmetic.Mean,
+         X1st.Max.Value,
+         Units.of.Measure,
+         State.Code
+         )
+
+write.csv(airdata, "C:/Users/34731/Desktop/Capstone/Solar data set/air condition from 1995-2019 in all state/daily data/CO\\AirData.csv")
+
+``` 
+
+## SO2 Data
+```{r}
+setwd(path2)
+data <- list.files(path="C:/Users/34731/Desktop/Capstone/Solar data set/air condition from 1995-2019 in all state/daily data/SO2", pattern="*.csv", full.names = TRUE) %>% 
+  lapply(read_csv) %>% 
+  bind_rows 
+
+airdata1 <- data %>%
+  select(`State Name`,
+         `County Name`,
+         `City Name`,
+         `Date Local`,
+         `Parameter Name`,
+         `Arithmetic Mean`,
+          `1st Max Value`,
+         `Units of Measure`,
+         `State Code`
+         )
+
+write.csv(airdata1, "C:/Users/34731/Desktop/Capstone/Solar data set/air condition from 1995-2019 in all state/daily data/SO2\\AirData1.csv")
+```  
+
+## Data filter (1)
+```{r}
+setwd(path2)
+airdata_so2 <- read.csv("AirData1.csv")
+so2 <- airdata_so2 %>%
+  mutate(month = month(Date.Local),
+         year = year(Date.Local)) %>%
+  group_by(State.Name,
+           year,
+           State.Code) %>%
+  summarise(mean_so2 = mean(Arithmetic.Mean)) %>%
+  filter(!year < 1996,
+         !year > 2017)
+
+write.csv(so2, "C:/Users/34731/Desktop/Capstone/Solar data set/air condition from 1995-2019 in all state/daily data/SO2\\AirData_so2.csv")
+  
+
+```
+
+## Data filter (2)
+```{r}
+setwd(path1)
+airdata_CO <- read.csv("AirData.csv")
+CO <- airdata_CO %>%
+  mutate(month = month(Date.Local),
+         year = year(Date.Local)) %>%
+  group_by(State.Name,
+           year,
+           State.Code) %>%
+  summarise(mean_CO = mean(Arithmetic.Mean)) %>%
+  filter(!year < 1996,
+         !year > 2017)
+
+write.csv(CO, "C:/Users/34731/Desktop/Capstone/Solar data set/air condition from 1995-2019 in all state/daily data/CO\\AirData_CO.csv")
+```
+
+## Data filter (3)
+```{r}
+setwd(path3)
+emission_data <- read_xlsx("state_tier1_caps.xlsx") %>%
+  filter(!Pollutant == "VOC",
+         !Pollutant == "PM10-PRI",
+         !Pollutant == "PM25-PRI",
+         !Pollutant == "NOX",
+         !Pollutant == "NH3")
+emission_data$emissions90 <- NULL
+emission_data$emissions18 <- NULL
+emission_data$emissions19 <- NULL
+emission_data$emissions20 <- NULL
+
+mdata <- melt(emission_data, 
+              id=c("State Code",
+                   "State",
+                   "Tier 1 Code",
+                   "Tier 1 Description",
+                   "Pollutant"),
+              variable.name = "year",
+              value.name = "Sum"
+              ) %>%
+  mutate(year = case_when(
+    year == "emissions96" ~ 1996,
+    year == "emissions97" ~ 1997,
+    year == "emissions98" ~ 1998,
+    year == "emissions99" ~ 1999,
+    year == "emissions00" ~ 2000,
+    year == "emissions01" ~ 2001,
+    year == "emissions02" ~ 2002,
+    year == "emissions03" ~ 2003,
+    year == "emissions04" ~ 2004,
+    year == "emissions05" ~ 2005,
+    year == "emissions06" ~ 2006,
+    year == "emissions07" ~ 2007,
+    year == "emissions08" ~ 2008,
+    year == "emissions09" ~ 2009,
+    year == "emissions10" ~ 2010,
+    year == "emissions11" ~ 2011,
+    year == "emissions12" ~ 2012,
+    year == "emissions13" ~ 2013,
+    year == "emissions14" ~ 2014,
+    year == "emissions15" ~ 2015,
+    year == "emissions16" ~ 2016,
+    year == "emissions17" ~ 2017
+    )
+  ) %>%
+  unite(pollutant,c("Tier 1 Description", "Pollutant"))
+
+
+write.csv(mdata, 
+          "C:/Users/34731/Desktop/Capstone/Solar data set/air emiision data from 1996-2019\\emissions_data_all.csv")
+  
+```
+
+## Merging data 1
+```{r Merging data}
+setwd(path4)
+mergedata1 <- read.csv("AirData_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code))
+
+mergedata2 <- read.csv("AirData_so2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code))
+
+mergedata4 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(FUEL_COMB_ELEC_UTIL_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(FUEL_COMB_ELEC_UTIL_SO2))
+mergedata4$Tier.1.Code <- NULL
+mergedata4$pollutant<- NULL
+mergedata4$Sum<- NULL
+mergedata4$X<- NULL
+mergedata4$State.Name <- stateFromLower(mergedata4$State.Name)
+mergedata4$State.Name <- str_to_title(mergedata4$State.Name)
+
+mergedata5 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(FUEL_COMB_INDUSTRIAL_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(FUEL_COMB_INDUSTRIAL_SO2))
+mergedata5$Tier.1.Code <- NULL
+mergedata5$pollutant<- NULL
+mergedata5$Sum<- NULL
+mergedata5$X<- NULL
+mergedata5$State.Name <- stateFromLower(mergedata5$State.Name)
+mergedata5$State.Name <- str_to_title(mergedata5$State.Name)
+
+mergedata6 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(FUEL_COMB_OTHER_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(FUEL_COMB_OTHER_SO2))
+mergedata6$Tier.1.Code <- NULL
+mergedata6$pollutant<- NULL
+mergedata6$Sum<- NULL
+mergedata6$X<- NULL
+mergedata6$State.Name <- stateFromLower(mergedata6$State.Name)
+mergedata6$State.Name <- str_to_title(mergedata6$State.Name)
+
+mergedata7 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(CHEMICAL_ALLIED_PRODUCT_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(CHEMICAL_ALLIED_PRODUCT_SO2))
+mergedata7$Tier.1.Code <- NULL
+mergedata7$pollutant<- NULL
+mergedata7$Sum<- NULL
+mergedata7$X<- NULL
+mergedata7$State.Name <- stateFromLower(mergedata7$State.Name)
+mergedata7$State.Name <- str_to_title(mergedata7$State.Name)
+
+mergedata8 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(METALS_PROCESSING_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(METALS_PROCESSING_SO2))
+mergedata8$Tier.1.Code <- NULL
+mergedata8$pollutant<- NULL
+mergedata8$Sum<- NULL
+mergedata8$X<- NULL
+mergedata8$State.Name <- stateFromLower(mergedata8$State.Name)
+mergedata8$State.Name <- str_to_title(mergedata8$State.Name)
+
+mergedata9 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(PETROLEUM_RELATED_INDUSTRIES_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(PETROLEUM_RELATED_INDUSTRIES_SO2))
+mergedata9$Tier.1.Code <- NULL
+mergedata9$pollutant<- NULL
+mergedata9$Sum<- NULL
+mergedata9$X<- NULL
+mergedata9$State.Name <- stateFromLower(mergedata9$State.Name)
+mergedata9$State.Name <- str_to_title(mergedata9$State.Name)
+
+mergedata10 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(OTHER_INDUSTRIAL_PROCESSES_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(OTHER_INDUSTRIAL_PROCESSES_SO2))
+mergedata10$Tier.1.Code <- NULL
+mergedata10$pollutant<- NULL
+mergedata10$Sum<- NULL
+mergedata10$X<- NULL
+mergedata10$State.Name <- stateFromLower(mergedata10$State.Name)
+mergedata10$State.Name <- str_to_title(mergedata10$State.Name)
+
+mergedata11 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(SOLVENT_UTILIZATION_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(SOLVENT_UTILIZATION_SO2))
+mergedata11$Tier.1.Code <- NULL
+mergedata11$pollutant<- NULL
+mergedata11$Sum<- NULL
+mergedata11$X<- NULL
+mergedata11$State.Name <- stateFromLower(mergedata11$State.Name)
+mergedata11$State.Name <- str_to_title(mergedata11$State.Name)
+
+mergedata12 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(STORAGE_TRANSPORT_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(STORAGE_TRANSPORT_SO2))
+mergedata12$Tier.1.Code <- NULL
+mergedata12$pollutant<- NULL
+mergedata12$Sum<- NULL
+mergedata12$X<- NULL
+mergedata12$State.Name <- stateFromLower(mergedata12$State.Name)
+mergedata12$State.Name <- str_to_title(mergedata12$State.Name)
+
+mergedata13 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(WASTE_DISPOSAL_RECYCLING_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(WASTE_DISPOSAL_RECYCLING_SO2))
+mergedata13$Tier.1.Code <- NULL
+mergedata13$pollutant<- NULL
+mergedata13$Sum<- NULL
+mergedata13$X<- NULL
+mergedata13$State.Name <- stateFromLower(mergedata13$State.Name)
+mergedata13$State.Name <- str_to_title(mergedata13$State.Name)
+
+
+mergedata14 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(HIGHWAY_VEHICLES_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(HIGHWAY_VEHICLES_SO2))
+mergedata14$Tier.1.Code <- NULL
+mergedata14$pollutant<- NULL
+mergedata14$Sum<- NULL
+mergedata14$X<- NULL
+mergedata14$State.Name <- stateFromLower(mergedata14$State.Name)
+mergedata14$State.Name <- str_to_title(mergedata14$State.Name)
+
+mergedata15 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(OFF_HIGHWAY_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(OFF_HIGHWAY_SO2))
+mergedata15$Tier.1.Code <- NULL
+mergedata15$pollutant<- NULL
+mergedata15$Sum<- NULL
+mergedata15$X<- NULL
+mergedata15$State.Name <- stateFromLower(mergedata15$State.Name)
+mergedata15$State.Name <- str_to_title(mergedata15$State.Name)
+
+
+mergedata16 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(MISCELLANEOUS_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(MISCELLANEOUS_SO2))
+mergedata16$Tier.1.Code <- NULL
+mergedata16$pollutant<- NULL
+mergedata16$Sum<- NULL
+mergedata16$X<- NULL
+mergedata16$State.Name <- stateFromLower(mergedata16$State.Name)
+mergedata16$State.Name <- str_to_title(mergedata16$State.Name)
+
+mergedata17 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(WILDFIRES_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(WILDFIRES_SO2))
+mergedata17$Tier.1.Code <- NULL
+mergedata17$pollutant<- NULL
+mergedata17$Sum<- NULL
+mergedata17$X<- NULL
+mergedata17$State.Name <- stateFromLower(mergedata17$State.Name)
+mergedata17$State.Name <- str_to_title(mergedata17$State.Name)
+
+
+mergedata18 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(WILDFIRES_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(WILDFIRES_SO2))
+mergedata18$Tier.1.Code <- NULL
+mergedata18$pollutant<- NULL
+mergedata18$Sum<- NULL
+mergedata18$X<- NULL
+mergedata18$State.Name <- stateFromLower(mergedata18$State.Name)
+mergedata18$State.Name <- str_to_title(mergedata18$State.Name)
+
+mergedata19 <- read.csv("emissions_data_SO2.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(PRESCRIBED_FIRES_SO2 = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(PRESCRIBED_FIRES_SO2))
+mergedata19$Tier.1.Code <- NULL
+mergedata19$pollutant<- NULL
+mergedata19$Sum<- NULL
+mergedata19$X<- NULL
+mergedata19$State.Name <- stateFromLower(mergedata19$State.Name)
+mergedata19$State.Name <- str_to_title(mergedata19$State.Name)
+
+mergedata20<- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(FUEL_COMB_ELEC_UTIL_CO = if_else(Tier.1.Code == 1, Sum, NULL))%>%
+  filter(!is.na(FUEL_COMB_ELEC_UTIL_CO))
+mergedata20$Tier.1.Code <- NULL
+mergedata20$pollutant<- NULL
+mergedata20$Sum<- NULL
+mergedata20$X<- NULL
+mergedata20$State.Name <- stateFromLower(mergedata20$State.Name)
+mergedata20$State.Name <- str_to_title(mergedata20$State.Name)
+
+
+mergedata21 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(FUEL_COMB_INDUSTRIAL_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(FUEL_COMB_INDUSTRIAL_CO))
+mergedata21$Tier.1.Code <- NULL
+mergedata21$pollutant<- NULL
+mergedata21$Sum<- NULL
+mergedata21$X<- NULL
+mergedata21$State.Name <- stateFromLower(mergedata21$State.Name)
+mergedata21$State.Name <- str_to_title(mergedata21$State.Name)
+
+mergedata22 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(FUEL_COMB_OTHER_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(FUEL_COMB_OTHER_CO))
+mergedata22$Tier.1.Code <- NULL
+mergedata22$pollutant<- NULL
+mergedata22$Sum<- NULL
+mergedata22$X<- NULL
+mergedata22$State.Name <- stateFromLower(mergedata22$State.Name)
+mergedata22$State.Name <- str_to_title(mergedata22$State.Name)
+
+mergedata23 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(CHEMICAL_ALLIED_PRODUCT_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(CHEMICAL_ALLIED_PRODUCT_CO))
+mergedata23$Tier.1.Code <- NULL
+mergedata23$pollutant<- NULL
+mergedata23$Sum<- NULL
+mergedata23$X<- NULL
+mergedata23$State.Name <- stateFromLower(mergedata23$State.Name)
+mergedata23$State.Name <- str_to_title(mergedata23$State.Name)
+
+mergedata24 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(METALS_PROCESSING_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(METALS_PROCESSING_CO))
+mergedata24$Tier.1.Code <- NULL
+mergedata24$pollutant<- NULL
+mergedata24$Sum<- NULL
+mergedata24$X<- NULL
+mergedata24$State.Name <- stateFromLower(mergedata24$State.Name)
+mergedata24$State.Name <- str_to_title(mergedata24$State.Name)
+
+mergedata25 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(PETROLEUM_RELATED_INDUSTRIES_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(PETROLEUM_RELATED_INDUSTRIES_CO))
+mergedata25$Tier.1.Code <- NULL
+mergedata25$pollutant<- NULL
+mergedata25$Sum<- NULL
+mergedata25$X<- NULL
+mergedata25$State.Name <- stateFromLower(mergedata25$State.Name)
+mergedata25$State.Name <- str_to_title(mergedata25$State.Name)
+
+mergedata26 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(OTHER_INDUSTRIAL_PROCESSES_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(OTHER_INDUSTRIAL_PROCESSES_CO))
+mergedata26$Tier.1.Code <- NULL
+mergedata26$pollutant<- NULL
+mergedata26$Sum<- NULL
+mergedata26$X<- NULL
+mergedata26$State.Name <- stateFromLower(mergedata26$State.Name)
+mergedata26$State.Name <- str_to_title(mergedata26$State.Name)
+
+mergedata27 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(SOLVENT_UTILIZATION_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(SOLVENT_UTILIZATION_CO))
+mergedata27$Tier.1.Code <- NULL
+mergedata27$pollutant<- NULL
+mergedata27$Sum<- NULL
+mergedata27$X<- NULL
+mergedata27$State.Name <- stateFromLower(mergedata27$State.Name)
+mergedata27$State.Name <- str_to_title(mergedata27$State.Name)
+
+mergedata28 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(STORAGE_TRANSPORT_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(STORAGE_TRANSPORT_CO))
+mergedata28$Tier.1.Code <- NULL
+mergedata28$pollutant<- NULL
+mergedata28$Sum<- NULL
+mergedata28$X<- NULL
+mergedata28$State.Name <- stateFromLower(mergedata28$State.Name)
+mergedata28$State.Name <- str_to_title(mergedata28$State.Name)
+
+mergedata29 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(WASTE_DISPOSAL_RECYCLING_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(WASTE_DISPOSAL_RECYCLING_CO))
+mergedata29$Tier.1.Code <- NULL
+mergedata29$pollutant<- NULL
+mergedata29$Sum<- NULL
+mergedata29$X<- NULL
+mergedata29$State.Name <- stateFromLower(mergedata29$State.Name)
+mergedata29$State.Name <- str_to_title(mergedata29$State.Name)
+
+
+mergedata30 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(HIGHWAY_VEHICLES_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(HIGHWAY_VEHICLES_CO))
+mergedata30$Tier.1.Code <- NULL
+mergedata30$pollutant<- NULL
+mergedata30$Sum<- NULL
+mergedata30$X<- NULL
+mergedata30$State.Name <- stateFromLower(mergedata30$State.Name)
+mergedata30$State.Name <- str_to_title(mergedata30$State.Name)
+
+mergedata31 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(OFF_HIGHWAY_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(OFF_HIGHWAY_CO))
+mergedata31$Tier.1.Code <- NULL
+mergedata31$pollutant<- NULL
+mergedata31$Sum<- NULL
+mergedata31$X<- NULL
+mergedata31$State.Name <- stateFromLower(mergedata31$State.Name)
+mergedata31$State.Name <- str_to_title(mergedata31$State.Name)
+
+
+mergedata32 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(MISCELLANEOUS_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(MISCELLANEOUS_CO))
+mergedata32$Tier.1.Code <- NULL
+mergedata32$pollutant<- NULL
+mergedata32$Sum<- NULL
+mergedata32$X<- NULL
+mergedata32$State.Name <- stateFromLower(mergedata32$State.Name)
+mergedata32$State.Name <- str_to_title(mergedata32$State.Name)
+
+mergedata33 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(WILDFIRES_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(WILDFIRES_CO))
+mergedata33$Tier.1.Code <- NULL
+mergedata33$pollutant<- NULL
+mergedata33$Sum<- NULL
+mergedata33$X<- NULL
+mergedata33$State.Name <- stateFromLower(mergedata33$State.Name)
+mergedata33$State.Name <- str_to_title(mergedata33$State.Name)
+
+
+mergedata34 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(WILDFIRES_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(WILDFIRES_CO))
+mergedata34$Tier.1.Code <- NULL
+mergedata34$pollutant<- NULL
+mergedata34$Sum<- NULL
+mergedata34$X<- NULL
+mergedata34$State.Name <- stateFromLower(mergedata34$State.Name)
+mergedata34$State.Name <- str_to_title(mergedata34$State.Name)
+
+mergedata35 <- read.csv("emissions_data_CO.csv") %>%
+  mutate(State.Code = as.numeric(State.Code)) %>%
+  unite(pollutant,c("Tier.1.Description", "Pollutant")) %>%
+  mutate(PRESCRIBED_FIRES_CO = if_else(Tier.1.Code == 1, Sum, NULL)) %>%
+  filter(!is.na(PRESCRIBED_FIRES_CO))
+mergedata35$Tier.1.Code <- NULL
+mergedata35$pollutant<- NULL
+mergedata35$Sum<- NULL
+mergedata35$X<- NULL
+mergedata35$State.Name <- stateFromLower(mergedata35$State.Name)
+mergedata35$State.Name <- str_to_title(mergedata35$State.Name)
+
+
+
+
+
+mergedata3 <- merge(mergedata1,
+                    mergedata2,
+                    by = c("State.Code", "year", "State.Name"),
+                    all = TRUE)
+
+mergedata3$X.x <- NULL
+mergedata3$X.y <- NULL
+
+merge <- Reduce(function(x, y) merge(x, y, all=TRUE), list(mergedata4,                                            
+                                                          mergedata5, 
+                                                           mergedata6,
+                                                           mergedata7,
+                                                           mergedata8,
+                                                           mergedata9,
+                                                           mergedata10,
+                                                           mergedata11,
+                                                           mergedata12,
+                                                           mergedata13,
+                                                           mergedata14,
+                                                           mergedata15,
+                                                           mergedata16,
+                                                           mergedata17,
+                                                           mergedata18,
+                                                           mergedata19))
+
+merge1 <- Reduce(function(x, y) merge(x, y, all=TRUE), list(mergedata20,
+                                                            mergedata21,
+                                                            mergedata22,
+                                                            mergedata23,
+                                                            mergedata24,
+                                                            mergedata25,
+                                                            mergedata26,
+                                                            mergedata27,
+                                                            mergedata28,
+                                                            mergedata29,
+                                                            mergedata30,
+                                                            mergedata31,
+                                                            mergedata32,
+                                                            mergedata33,
+                                                            mergedata34,
+                                                            mergedata35))
+
+
+finalmerge <- Reduce(function(x, y) merge(x, y, all=TRUE), list(mergedata3,
+                                                                merge,
+                                                                merge1)
+                     )
+
+write.csv(finalmerge, "C:/Users/34731/Desktop/Capstone/Solar data set/air condition from 1995-2019 in all state/Merging\\semifinal.csv")
+```
